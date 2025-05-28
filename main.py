@@ -3,11 +3,20 @@ import vllm
 from tqdm import tqdm
 
 
-def main(src_file_path: str, dst_file_path: str, lines_per_window: int = 100, stride: int = 84) -> None:
+def main(
+    src_file_path: str,
+    dst_file_path: str,
+    lines_per_window: int = 64,
+    stride: int = 48,
+    max_model_len: int = 16 * 1024,
+    max_num_seqs: int = 16,
+) -> None:
     with open(src_file_path) as fp:
         src_lines = fp.read().splitlines()
 
-    llm = vllm.LLM(model="pfnet/plamo-2-translate", trust_remote_code=True, max_model_len=16384, max_num_seqs=1)
+    llm = vllm.LLM(
+        model="pfnet/plamo-2-translate", trust_remote_code=True, max_model_len=max_model_len, max_num_seqs=max_num_seqs
+    )
 
     template_en_to_ja = r"""<|plamo:op|>dataset
 translation
@@ -18,7 +27,7 @@ translation
 
     translated_lines = []
 
-    for i in tqdm(range(0, len(src_lines), stride), desc="[Translation]"):
+    for i in tqdm(range(0, len(src_lines), stride), desc="[Translation Progress]"):
         # 空行を翻訳しなくていいように足してあげる
         while len(translated_lines) < len(src_lines) and src_lines[len(translated_lines)] == "":
             translated_lines.append("")
@@ -35,26 +44,33 @@ translation
         else:
             context = ""
         prompt += context
-        print("prompt:")
-        print(prompt)
 
         # 行数など簡単にチェックできる範囲でおかしい結果のときは retry する。最大10回やってだめなら raise する
-        for trial in range(10):
-            temperature = 0.0 if trial == 0 else 0.7  # 最初は温度 0.0 (greedy) で生成する
+        for trial in range(5):
+            # temperature > 0 のときは、まとめて生成するほうが早いため複数同時に生成する
             responses = llm.generate(
                 [prompt],
                 sampling_params=vllm.SamplingParams(
-                    temperature=temperature, max_tokens=8 * 1024, stop=["<|plamo:op|>"], seed=trial
+                    n=1 if trial == 0 else 8,
+                    temperature=0.0 if trial == 0 else 0.7,
+                    max_tokens=max_model_len // 2,
+                    stop=["<|plamo:op|>"],
+                    seed=trial,
                 ),
             )
-            result = responses[0].outputs[0].text.rstrip()
 
-            print("result:")
-            print(result)
+            # outputs の中から最も良いものを選ぶ
+            # (簡単のため、ここでは末尾以外の行数が揃っていれば採用とする。タスクに合わせていい感じの評価を実装する)
+            best_result: str | None = None
+            for output in responses[0].outputs:
+                result = output.text.rstrip()
 
-            # とりあえず末尾以外の行数だけチェックする。タスクによっては色々やりようがあるはず
-            if (context + result).count("\n") == src_text.rstrip().count("\n"):
-                translated_lines.extend(result.split("\n"))
+                if (context + result).count("\n") == src_text.rstrip().count("\n"):
+                    best_result = result
+                    break
+
+            if best_result is not None:
+                translated_lines.extend(best_result.split("\n"))
 
                 # 空行を翻訳しなくていいように足してあげる
                 while len(translated_lines) < len(src_lines) and src_lines[len(translated_lines)] == "":
