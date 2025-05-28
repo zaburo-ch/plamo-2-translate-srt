@@ -1,0 +1,16 @@
+[project]
+name = "plamo-transcription"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11.12"
+dependencies = [
+    "fire>=0.7.0",
+    "ipython>=9.2.0",
+    "openai-whisper>=20240930",
+    "vllm>=0.9.0",
+]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
